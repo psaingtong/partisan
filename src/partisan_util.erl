@@ -230,7 +230,7 @@ maybe_initiate_parallel_connections(Connections0, Channel, Node, ListenAddr, Par
 
 term_to_iolist(Term) ->
     [131, term_to_iolist_(Term)].
-        
+
 term_to_iolist_([]) ->
     106;
 term_to_iolist_({}) ->
@@ -297,13 +297,48 @@ pid(Pid) ->
 process_forward(ServerRef, Message) ->
     try
         case ServerRef of
+            {partisan_remote_reference, _, {partisan_process_reference, ProcessIdentifier}} ->
+                Pid = list_to_pid(ProcessIdentifier),
+                Pid ! Message;
             {partisan_process_reference, ProcessIdentifier} ->
                 Pid = list_to_pid(ProcessIdentifier),
                 Pid ! Message;
+            {global, Name} ->
+                Pid = global:whereis_name(Name),
+                Pid ! Message;
+            {via, Module, Name} ->
+                Pid =  Module:whereis_name(Name),
+                Pid ! Message;
             _ ->
-                ServerRef ! Message
+                ServerRef ! Message,
+                case partisan_config:get(tracing, ?TRACING) of
+                    true ->
+                        case is_pid(ServerRef) of
+                            true ->
+                                case is_process_alive(ServerRef) of
+                                    true ->
+                                        ok;
+                                    false ->
+                                        lager:info("Process ~p is NOT ALIVE.", [ServerRef])
+                                end;
+                            false ->
+                                case whereis(ServerRef) of
+                                    undefined ->
+                                        lager:info("Process ~p is NOT ALIVE.", [ServerRef]);
+                                    Pid ->
+                                        case is_process_alive(Pid) of
+                                            true ->
+                                                ok;
+                                            false ->
+                                                lager:info("Process ~p is NOT ALIVE.", [ServerRef])
+                                        end
+                                end
+                        end;
+                    false ->
+                        ok
+                end
         end
     catch
         _:Error ->
-            lager:debug("Error forwarding message ~p to process ~p: ~p", [Message, ServerRef, Error])
+            lager:info("Error forwarding message ~p to process ~p: ~p", [Message, ServerRef, Error])
     end.

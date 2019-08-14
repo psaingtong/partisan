@@ -18,16 +18,14 @@
 %%
 %% -------------------------------------------------------------------
 
--module(partisan_reliability_backend).
+-module(partisan_rpc_backend).
 -author("Christopher S. Meiklejohn <christopher.meiklejohn@gmail.com>").
 
 -behaviour(gen_server).
 
 %% API
 -export([start_link/0,
-         store/2,
-         ack/1,
-         outstanding/0]).
+         call/5]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -37,7 +35,9 @@
          terminate/2,
          code_change/3]).
 
--record(state, {storage}).
+-record(state, {}).
+
+-include("partisan.hrl").
 
 %%%===================================================================
 %%% API
@@ -46,14 +46,23 @@
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-store(MessageClock, Message) ->
-    gen_server:call(?MODULE, {store, MessageClock, Message}, infinity).
+call(Name, Module, Function, Arguments, Timeout) ->
+    %% Make call.
+    Manager = partisan_config:get(partisan_peer_service_manager),
+    Self = self(),
+    Options = options(),
+    RpcChannel = rpc_channel(),
+    OurName = partisan_peer_service_manager:mynode(),
+    Manager:forward_message(Name, RpcChannel, ?MODULE, {call, Module, Function, Arguments, Timeout, {origin, OurName, Self}}, Options),
 
-ack(MessageClock) ->
-    gen_server:call(?MODULE, {ack, MessageClock}, infinity).
-
-outstanding() ->
-    gen_server:call(?MODULE, outstanding, infinity).
+    %% Wait for response.
+    receive
+        {response, Response} ->
+            Response
+    after
+        Timeout ->
+            {badrpc, timeout}
+    end.
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -61,19 +70,9 @@ outstanding() ->
 
 %% @private
 init([]) ->
-    Storage = ets:new(?MODULE, [named_table]),
-    {ok, #state{storage=Storage}}.
+    {ok, #state{}}.
 
 %% @private
-handle_call({ack, MessageClock}, _From, #state{storage=Storage}=State) ->
-    true = ets:delete(Storage, MessageClock),
-    {reply, ok, State};
-handle_call({store, MessageClock, Message}, _From, #state{storage=Storage}=State) ->
-    true = ets:insert(Storage, {MessageClock, Message}),
-    {reply, ok, State};
-handle_call(outstanding, _From, #state{storage=Storage}=State) ->
-    Objects = ets:foldl(fun(X, Acc) -> Acc ++ [X] end, [], Storage),
-    {reply, {ok, Objects}, State};
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
@@ -82,6 +81,23 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 %% @private
+handle_info({call, Module, Function, Arguments, _Timeout, {origin, Name, Self}}, State) ->
+    %% Execute function.
+    Response = try 
+        erlang:apply(Module, Function, Arguments)
+    catch
+         Error ->
+             {badrpc, Error}
+    end,
+
+    %% Send the response to execution.
+    Manager = partisan_config:get(partisan_peer_service_manager),
+    Options = options(),
+    RpcChannel = rpc_channel(),
+    ok = Manager:forward_message(Name, RpcChannel, Self, {response, Response}, Options),
+
+    {noreply, State};
+
 handle_info(_Msg, State) ->
     {noreply, State}.
 
@@ -96,3 +112,16 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+options() ->
+    ForwardOptions = partisan_config:get(forward_options),
+    ForwardOptions.
+
+rpc_channel() ->
+    Channels = partisan_config:get(channels),
+    case lists:member(rpc, Channels) of
+        true ->
+            ?RPC_CHANNEL;
+        false ->
+            ?DEFAULT_CHANNEL
+    end.

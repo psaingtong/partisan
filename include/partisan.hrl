@@ -5,11 +5,15 @@
 -define(FANOUT, 5).
 -define(CACHE, partisan_connection_cache).
 -define(PARALLELISM, 1).
+-define(RPC_CHANNEL, rpc).
 -define(DEFAULT_CHANNEL, undefined).
 -define(DEFAULT_PARTITION_KEY, undefined).
 -define(CHANNELS, [?DEFAULT_CHANNEL]).
 -define(CONNECTION_JITTER, 1000).
 -define(DEFAULT_PEER_SERVICE_MANAGER, partisan_default_peer_service_manager).
+
+-define(TRACING, false).
+-define(RELAY_TTL, 5).
 
 -define(UTIL, partisan_plumtree_util).
 -define(DEFAULT_LAZY_TICK_PERIOD, 1000).
@@ -30,8 +34,7 @@
 -type node_spec() :: #{name => node(),
                        listen_addrs => [listen_addr()],
                        channels => [channel()],
-                       parallelism => non_neg_integer(),
-                       xbot_interval => non_neg_integer()}.
+                       parallelism => non_neg_integer()}.
 -type message() :: term().
 -type name() :: node().
 -type partitions() :: [{reference(), node_spec()}].
